@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QFileDialog, QMessageBox, QStackedWidget,
                             QListWidget, QProgressBar, QListWidgetItem)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QMutex, QMutexLocker
 from PyQt5.QtGui import QFont
 
 @dataclass
@@ -16,6 +16,40 @@ class FileInfo:
     output_path: str
     is_default_output: bool = True
     is_clipboard: bool = False
+
+    def __post_init__(self):
+        """Dosya yollarının geçerliliğini kontrol et"""
+        if not self.input_path:
+            raise ValueError("Input path cannot be empty")
+        if not self.output_path:
+            raise ValueError("Output path cannot be empty")
+        
+    @property
+    def input_exists(self) -> bool:
+        """Girdi dosyasının var olup olmadığını kontrol et"""
+        return os.path.exists(self.input_path)
+    
+    @property
+    def output_dir_exists(self) -> bool:
+        """Çıktı dizininin var olup olmadığını kontrol et"""
+        return os.path.exists(os.path.dirname(self.output_path))
+    
+    @property
+    def output_dir_writable(self) -> bool:
+        """Çıktı dizinine yazma izni olup olmadığını kontrol et"""
+        return os.access(os.path.dirname(self.output_path), os.W_OK)
+    
+    def create_output_dir(self) -> None:
+        """Çıktı dizinini oluştur"""
+        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+    
+    def cleanup(self) -> None:
+        """Geçici dosyaları temizle"""
+        if self.is_clipboard and os.path.exists(self.input_path):
+            try:
+                os.remove(self.input_path)
+            except OSError:
+                pass
 
 class ConversionWorker(QThread):
     progress = pyqtSignal(int, str)
@@ -27,6 +61,7 @@ class ConversionWorker(QThread):
         self.input_files = input_files
         self.batch_size = batch_size
         self._is_cancelled = False
+        self._mutex = QMutex()  # Thread güvenliği için mutex
 
     def run(self) -> None:
         try:
@@ -39,17 +74,28 @@ class ConversionWorker(QThread):
     def _process_files_in_batches(self) -> None:
         total = len(self.input_files)
         for i in range(0, total, self.batch_size):
-            if self._is_cancelled:
-                break
+            with QMutexLocker(self._mutex):
+                if self._is_cancelled:
+                    break
             batch = self.input_files[i:i + self.batch_size]
             self._process_batch(batch, i, total)
 
     def cancel(self) -> None:
-        self._is_cancelled = True
+        with QMutexLocker(self._mutex):
+            self._is_cancelled = True
 
     def _process_batch(self, batch: List[FileInfo], index: int, total: int) -> None:
         for i, file_info in enumerate(batch):
             try:
+                if not file_info.input_exists:
+                    raise FileNotFoundError(f"Input file not found: {file_info.input_path}")
+                
+                if not file_info.output_dir_exists:
+                    file_info.create_output_dir()
+                
+                if not file_info.output_dir_writable:
+                    raise PermissionError(f"No write permission for output directory: {os.path.dirname(file_info.output_path)}")
+                
                 self._convert_file(file_info.input_path, file_info.output_path)
                 progress = int(((i + index) / total) * 100)
                 self.progress.emit(progress, os.path.basename(file_info.input_path))
@@ -62,12 +108,20 @@ class ConversionWorker(QThread):
             
             subtitle_index = 1
             for line in infile:
+                with QMutexLocker(self._mutex):
+                    if self._is_cancelled:
+                        return
+
                 time_match = re.search(r'\[(\d+:\d+\.\d+)\s*->\s*(\d+:\d+\.\d+)\]', line)
                 if not time_match:
                     continue
 
-                start_time = self._time_to_seconds(time_match.group(1))
-                end_time = self._time_to_seconds(time_match.group(2))
+                try:
+                    start_time = self._time_to_seconds(time_match.group(1))
+                    end_time = self._time_to_seconds(time_match.group(2))
+                except ValueError as e:
+                    self.error.emit(f"Invalid time format in line: {line.strip()}")
+                    continue
                 
                 if start_time >= end_time:
                     continue
@@ -101,30 +155,36 @@ class SubtitleConverter(QMainWindow):
     def __init__(self):
         super().__init__()
         self.files_to_convert: List[FileInfo] = []
+        self.worker: Optional[ConversionWorker] = None
         self._setup_ui()
         self._setup_connections()
         self._load_settings()
 
+    def closeEvent(self, event) -> None:
+        """Uygulama kapatılırken geçici dosyaları temizle ve ayarları kaydet"""
+        self._save_settings()
+        self._cleanup_temp_files()
+        super().closeEvent(event)
+
+    def _save_settings(self) -> None:
+        """Uygulama ayarlarını kaydet"""
+        settings = QSettings('XeloxaSoft', 'WhisperToSRT')
+        settings.setValue('geometry', self.saveGeometry())
+
+    def _cleanup_temp_files(self) -> None:
+        """Geçici dosyaları temizle"""
+        for file_info in self.files_to_convert:
+            file_info.cleanup()
+
     def _setup_ui(self) -> None:
+        """UI bileşenlerini oluştur ve yapılandır"""
         self.setWindowTitle('Whisper Timestamp to SRT')
         self.setGeometry(100, 100, 800, 600)
         self._init_ui()
+        self._apply_styles()
 
-    def _setup_connections(self) -> None:
-        if hasattr(self, 'file_list'):
-            self.file_list.itemDoubleClicked.connect(self._change_output_location)
-        if hasattr(self, 'input_next_btn'):
-            self.input_next_btn.clicked.connect(self._start_batch_conversion)
-
-    def _load_settings(self) -> None:
-        settings = QSettings('XeloxaSoft', 'WhisperToSRT')
-        geometry = settings.value('geometry')
-        if geometry:
-            self.restoreGeometry(geometry)
-
-    def _init_ui(self):
-        self.setWindowTitle('Whisper Timestamp to SRT')
-        self.setGeometry(100, 100, 600, 400)
+    def _apply_styles(self) -> None:
+        """UI stillerini uygula"""
         self.setStyleSheet("""
             QMainWindow, QWidget {
                 background-color: #1a1a1a;
@@ -158,7 +218,53 @@ class SubtitleConverter(QMainWindow):
             QMessageBox QPushButton {
                 min-width: 100px;
             }
+            QListWidget {
+                background-color: #1E1E1E;
+                border: none;
+                border-radius: 8px;
+                color: #ffffff;
+                padding: 8px;
+                min-height: 200px;
+            }
+            QListWidget::item {
+                background-color: #2A2A2A;
+                border-radius: 6px;
+                margin: 4px;
+            }
+            QListWidget::item:hover {
+                background-color: #323232;
+            }
+            QListWidget::item:selected {
+                background-color: #2d5af5;
+            }
+            QProgressBar {
+                border: none;
+                background-color: #2a2a2a;
+                height: 10px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #2d5af5;
+            }
         """)
+
+    def _setup_connections(self) -> None:
+        """Sinyal ve yuva bağlantılarını kur"""
+        if hasattr(self, 'file_list'):
+            self.file_list.itemDoubleClicked.connect(self._change_output_location)
+        if hasattr(self, 'input_next_btn'):
+            self.input_next_btn.clicked.connect(self._start_batch_conversion)
+
+    def _load_settings(self) -> None:
+        """Uygulama ayarlarını yükle"""
+        settings = QSettings('XeloxaSoft', 'WhisperToSRT')
+        geometry = settings.value('geometry')
+        if geometry:
+            self.restoreGeometry(geometry)
+
+    def _init_ui(self):
+        self.setWindowTitle('Whisper Timestamp to SRT')
+        self.setGeometry(100, 100, 600, 400)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -426,7 +532,8 @@ class SubtitleConverter(QMainWindow):
         
         self.stack.addWidget(page)
         
-    def select_input_files(self):
+    def select_input_files(self) -> None:
+        """Girdi dosyalarını seç"""
         files, _ = QFileDialog.getOpenFileNames(
             self,
             'Select TXT Files',
@@ -434,216 +541,101 @@ class SubtitleConverter(QMainWindow):
             'TXT Files (*.txt)'
         )
         
-        if files:
-            duplicate_files = []
-            new_files = []
+        if not files:
+            return
             
-            for input_file in files:
-                is_duplicate = any(file_info.input_path == input_file for file_info in self.files_to_convert)
+        self._process_selected_files(files)
+
+    def _process_selected_files(self, files: List[str]) -> None:
+        """Seçilen dosyaları işle"""
+        duplicate_files = []
+        new_files = []
+        
+        for input_file in files:
+            if self._is_duplicate_file(input_file):
+                duplicate_files.append(os.path.basename(input_file))
+                continue
                 
-                if is_duplicate:
-                    duplicate_files.append(os.path.basename(input_file))
-                else:
-                    output_file = input_file.rsplit('.', 1)[0] + '.srt'
-                    file_info = FileInfo(input_path=input_file, output_path=output_file)
-                    new_files.append(file_info)
-            
-            for file_info in new_files:
-                self.files_to_convert.append(file_info)
-                self.update_list_item(len(self.files_to_convert) - 1)
-            
-            if new_files:
-                self.input_next_btn.setEnabled(True)
-            
-            if duplicate_files:
-                files_str = "\n".join(duplicate_files)
-                QMessageBox.warning(
-                    self,
-                    'Duplicate Files',
-                    f'The following files were not added because they are already in the list:\n\n{files_str}'
-                )
+            try:
+                output_file = input_file.rsplit('.', 1)[0] + '.srt'
+                file_info = FileInfo(input_path=input_file, output_path=output_file)
+                new_files.append(file_info)
+            except ValueError as e:
+                QMessageBox.warning(self, 'Error', str(e))
+                continue
+        
+        self._add_new_files(new_files)
+        self._show_duplicate_files_warning(duplicate_files)
 
-    def update_list_item(self, index):
-        file_info = self.files_to_convert[index]
-        
-        if file_info.is_clipboard:
-            input_name = "Pasted Text"
-        else:
-            input_name = os.path.basename(file_info.input_path)
-        
-        output_name = os.path.basename(file_info.output_path)
-        
-        item_widget = QWidget()
-        layout = QHBoxLayout(item_widget)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(15)
-        
-        info_container = QWidget()
-        info_layout = QVBoxLayout(info_container)
-        info_layout.setContentsMargins(0, 10, 0, 10)
-        info_layout.setSpacing(2)
-        
-        file_label = QLabel(input_name)
-        file_label.setStyleSheet("""
-            color: white;
-            font-size: 14px;
-            font-weight: 500;
-        """)
-        
-        if file_info.is_default_output:
-            path_text = f"→ {output_name} (Default Location)"
-        else:
-            output_path = os.path.dirname(file_info.output_path)
-            path_text = f"→ {output_name} ({output_path})"
-            
-        path_label = QLabel(path_text)
-        path_label.setStyleSheet("""
-            color: #8E8E8E;
-            font-size: 12px;
-        """)
-        
-        info_layout.addWidget(file_label)
-        info_layout.addWidget(path_label)
-        
-        remove_btn = QPushButton("Remove")
-        remove_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ff3b30;
-                color: white;
-                border: none;
-                padding: 3px 8px;
-                border-radius: 2px;
-                font-size: 11px;
-                min-width: 45px;
-            }
-            QPushButton:hover {
-                background-color: #d63029;
-            }
-        """)
-        remove_btn.setCursor(Qt.PointingHandCursor)
-        remove_btn.clicked.connect(lambda: self.remove_file(index))
-        remove_btn.setFixedWidth(45)
-        remove_btn.setFixedHeight(22)
-        
-        layout.addWidget(info_container, stretch=1)
-        layout.addWidget(remove_btn)
-        
-        list_item = QListWidgetItem()
-        list_item.setSizeHint(item_widget.sizeHint())
-        
-        if index < self.file_list.count():
-            self.file_list.takeItem(index)
-            self.file_list.insertItem(index, list_item)
-        else:
-            self.file_list.addItem(list_item)
-        
-        self.file_list.setItemWidget(list_item, item_widget)
+    def _is_duplicate_file(self, input_file: str) -> bool:
+        """Dosyanın zaten listede olup olmadığını kontrol et"""
+        return any(file_info.input_path == input_file for file_info in self.files_to_convert)
 
-    def remove_file(self, index):
-        if 0 <= index < len(self.files_to_convert):
-            self.files_to_convert.pop(index)
-            self.file_list.takeItem(index)
-            
-            for i in range(index, self.file_list.count()):
-                item_widget = self.file_list.itemWidget(self.file_list.item(i))
-                for child in item_widget.children():
-                    if isinstance(child, QPushButton):
-                        child.clicked.disconnect()
-                        child.clicked.connect(lambda checked, idx=i: self.remove_file(idx))
-            
-            if not self.files_to_convert:
-                self.input_next_btn.setEnabled(False)
-
-    def _change_output_location(self, item):
-        index = self.file_list.row(item)
-        file_info = self.files_to_convert[index]
+    def _add_new_files(self, new_files: List[FileInfo]) -> None:
+        """Yeni dosyaları listeye ekle"""
+        for file_info in new_files:
+            self.files_to_convert.append(file_info)
+            self.update_list_item(len(self.files_to_convert) - 1)
         
-        default_name = os.path.basename(file_info.output_path)
-        default_dir = os.path.dirname(file_info.output_path)
-        
-        new_output, _ = QFileDialog.getSaveFileName(
-            self,
-            'Select Output Location',
-            os.path.join(default_dir, default_name),
-            'SRT Files (*.srt)'
-        )
-        
-        if new_output:
-            if not new_output.lower().endswith('.srt'):
-                new_output += '.srt'
-            
-            if os.path.exists(new_output):
-                reply = QMessageBox.question(
-                    self,
-                    'File Already Exists',
-                    f'The file "{os.path.basename(new_output)}" already exists.\nDo you want to overwrite it?',
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-                
-                if reply == QMessageBox.No:
-                    return
-            
-            self.files_to_convert[index].output_path = new_output
-            self.files_to_convert[index].is_default_output = False
-            self.update_list_item(index)
+        if new_files:
+            self.input_next_btn.setEnabled(True)
 
-    def clear_file_list(self):
-        for file_info in self.files_to_convert:
-            if file_info.is_clipboard:
-                try:
-                    os.remove(file_info.input_path)
-                except:
-                    pass
-                
-        self.file_list.clear()
-        self.files_to_convert.clear()
-        self.input_next_btn.setEnabled(False)
-        self.progress_bar.hide()
-        self.progress_label.hide()
+    def _show_duplicate_files_warning(self, duplicate_files: List[str]) -> None:
+        """Yinelenen dosyalar için uyarı göster"""
+        if duplicate_files:
+            files_str = "\n".join(duplicate_files)
+            QMessageBox.warning(
+                self,
+                'Duplicate Files',
+                f'The following files were not added because they are already in the list:\n\n{files_str}'
+            )
 
-    def _start_batch_conversion(self):
+    def _start_batch_conversion(self) -> None:
+        """Toplu dönüştürme işlemini başlat"""
         if not self.files_to_convert:
             QMessageBox.warning(self, 'Error', 'Please select files to convert!')
             return
             
-        existing_files = []
-        for file_info in self.files_to_convert:
-            if os.path.exists(file_info.output_path):
-                existing_files.append(os.path.basename(file_info.output_path))
+        if not self._confirm_overwrite():
+            return
+            
+        self._prepare_conversion()
+        self._start_conversion_worker()
+
+    def _confirm_overwrite(self) -> bool:
+        """Var olan dosyaların üzerine yazma onayı al"""
+        existing_files = [
+            os.path.basename(file_info.output_path)
+            for file_info in self.files_to_convert
+            if os.path.exists(file_info.output_path)
+        ]
         
-        if existing_files:
-            files_str = "\n".join(existing_files)
-            reply = QMessageBox.question(
-                self,
-                'Files Already Exist',
-                f'The following files already exist:\n\n{files_str}\n\nDo you want to overwrite them?',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
+        if not existing_files:
+            return True
             
-            if reply == QMessageBox.No:
-                return
-            
+        files_str = "\n".join(existing_files)
+        reply = QMessageBox.question(
+            self,
+            'Files Already Exist',
+            f'The following files already exist:\n\n{files_str}\n\nDo you want to overwrite them?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        return reply == QMessageBox.Yes
+
+    def _prepare_conversion(self) -> None:
+        """Dönüştürme işlemi için hazırlık yap"""
         self.input_next_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_bar.show()
         self.progress_label.show()
-        
-        for file_info in self.files_to_convert:
-            if not os.path.exists(file_info.input_path):
-                QMessageBox.warning(self, 'Error', f"File not found: {file_info.input_path}")
-                self.input_next_btn.setEnabled(True)
-                return
-                
-            output_dir = os.path.dirname(file_info.output_path)
-            if not os.path.exists(output_dir):
-                try:
-                    os.makedirs(output_dir)
-                except Exception as e:
-                    QMessageBox.warning(self, 'Error', f"Could not create output directory: {output_dir}\n{str(e)}")
-                    self.input_next_btn.setEnabled(True)
-                    return
+
+    def _start_conversion_worker(self) -> None:
+        """Dönüştürme worker'ını başlat"""
+        if self.worker is not None:
+            self.worker.cancel()
+            self.worker.wait()
         
         self.worker = ConversionWorker(self.files_to_convert)
         self.worker.progress.connect(self.update_progress)
@@ -801,9 +793,34 @@ class SubtitleConverter(QMainWindow):
         
         if not self._validate_output_file(output_file):
             return
-        
+            
         try:
+            # Önce geçici dosyayı oluştur
             temp_input = self._create_temp_file(text)
+            
+            # Çıktı dizininin varlığını kontrol et
+            output_dir = os.path.dirname(output_file)
+            if not os.path.exists(output_dir):
+                try:
+                    os.makedirs(output_dir)
+                except Exception as e:
+                    # Geçici dosyayı temizle
+                    try:
+                        os.remove(temp_input)
+                    except:
+                        pass
+                    QMessageBox.critical(self, 'Error', f'Could not create output directory: {str(e)}')
+                    return
+            
+            # Çıktı dizinine yazma izni kontrolü
+            if not os.access(output_dir, os.W_OK):
+                try:
+                    os.remove(temp_input)
+                except:
+                    pass
+                QMessageBox.critical(self, 'Error', 'No write permission for the output directory')
+                return
+            
             file_info = FileInfo(
                 input_path=temp_input, 
                 output_path=output_file, 
@@ -817,6 +834,11 @@ class SubtitleConverter(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Error while pasting text:\n{str(e)}')
+            # Hata durumunda geçici dosyayı temizle
+            try:
+                os.remove(temp_input)
+            except:
+                pass
 
     def _get_output_file_path(self) -> Optional[str]:
         output_file, _ = QFileDialog.getSaveFileName(
@@ -869,14 +891,28 @@ class SubtitleConverter(QMainWindow):
 
     @staticmethod
     def safe_file_operations(func):
+        """Dosya işlemleri için güvenlik dekoratörü.
+        
+        Hem statik metotlar hem de sınıf metotları için çalışır.
+        Hata durumunda QMessageBox gösterir.
+        """
         @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
+        def wrapper(*args, **kwargs):
             try:
-                return func(self, *args, **kwargs)
+                return func(*args, **kwargs)
             except PermissionError:
-                QMessageBox.critical(self, 'Error', 'Permission denied when accessing file.')
+                # İlk argüman self ise onu kullan, değilse None olarak bırak
+                self = args[0] if args and isinstance(args[0], QMainWindow) else None
+                if self:
+                    QMessageBox.critical(self, 'Error', 'Permission denied when accessing file.')
+                else:
+                    QMessageBox.critical(None, 'Error', 'Permission denied when accessing file.')
             except OSError as e:
-                QMessageBox.critical(self, 'Error', f'File operation failed: {e}')
+                self = args[0] if args and isinstance(args[0], QMainWindow) else None
+                if self:
+                    QMessageBox.critical(self, 'Error', f'File operation failed: {e}')
+                else:
+                    QMessageBox.critical(None, 'Error', f'File operation failed: {e}')
             return None
         return wrapper
 
