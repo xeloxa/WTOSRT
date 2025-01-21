@@ -10,11 +10,11 @@ Bu araç, [Hugging Face Space](https://huggingface.co/spaces/sanchit-gandhi/whis
 - Hata kontrol mekanizması
 - Açık kaynak kodlu
 
-### Kurulum ve Gereksinimler
+## Kurulum ve Gereksinimler
 
 **NOT:** Python veya pip komutları çalışmazsa, python3 veya pip3 olarak deneyiniz.
 
-#### Windows için Kurulum:
+### Windows için Kurulum:
 1. **Python 3.x**
    - En son kararlı sürümü [Python'un resmi sitesinden](https://www.python.org/downloads/) indirebilirsiniz
    - Kurulum sırasında "Add Python to PATH" seçeneğini işaretlemeyi unutmayın
@@ -29,7 +29,7 @@ Bu araç, [Hugging Face Space](https://huggingface.co/spaces/sanchit-gandhi/whis
    python app.py
    ```
 
-#### macOS için Kurulum:
+### macOS için Kurulum:
 1. **Python 3.x**
    - Homebrew ile kurulum:
    ```bash
@@ -47,7 +47,7 @@ Bu araç, [Hugging Face Space](https://huggingface.co/spaces/sanchit-gandhi/whis
    python3 app.py
    ```
 
-#### Linux için Kurulum:
+### Linux için Kurulum:
 1. **Python 3.x**
    - Ubuntu/Debian için:
    ```bash
