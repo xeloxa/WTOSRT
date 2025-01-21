@@ -11,10 +11,9 @@ Bu araç, [Hugging Face Space](https://huggingface.co/spaces/sanchit-gandhi/whis
 - Açık kaynak kodlu
 
 Arayüz görünümü:
-
-![Ana Pencere](pictures/main_window.png)
-![Dönüştürme Başarılı](pictures/success.png)
-![Hata Mesajı](pictures/error.png)
+![Arayüz görünümü](pictures/1.png)
+![Arayüz görünümü](pictures/2.png)
+![Arayüz görünümü](pictures/3.png)
 
 ## Kurulum ve Gereksinimler
 
