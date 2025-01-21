@@ -163,9 +163,32 @@ class SubtitleConverter(QMainWindow):
         start_btn = QPushButton('Start')
         start_btn.clicked.connect(lambda: self.stack.setCurrentIndex(1))
         
+        links_container = QWidget()
+        links_layout = QHBoxLayout(links_container)
+        links_layout.setSpacing(20)  # linkler arası boşluk
+        
+        github_link = QLabel()
+        github_link.setText('<a href="https://github.com/xeloxa" style="color: #999999; text-decoration: none;">Github</a>')
+        github_link.setOpenExternalLinks(True)
+        
+        website_link = QLabel()
+        website_link.setText('<a href="https://xeloxa.netlify.app" style="color: #999999; text-decoration: none;">Website</a>')
+        website_link.setOpenExternalLinks(True)
+        
+        contact_link = QLabel()
+        contact_link.setText('<a href="mailto:alisunbul@proton.me" style="color: #999999; text-decoration: none;">Contact</a>')
+        contact_link.setOpenExternalLinks(True)
+        
+        links_layout.addStretch()
+        links_layout.addWidget(github_link)
+        links_layout.addWidget(website_link)
+        links_layout.addWidget(contact_link)
+        links_layout.addStretch()
+        
         layout.addWidget(title)
         layout.addWidget(desc)
         layout.addWidget(start_btn, alignment=Qt.AlignCenter)
+        layout.addWidget(links_container)
         
         self.stack.addWidget(page)
         
