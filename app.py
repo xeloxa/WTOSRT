@@ -112,18 +112,15 @@ class SubtitleConverter(QMainWindow):
             }
         """)
         
-        # Main widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         layout.setSpacing(20)
         layout.setContentsMargins(30, 30, 30, 30)
         
-        # Create stack widget
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
         
-        # Create pages
         self.create_welcome_page()
         self.create_input_page()
         self.create_output_page()
@@ -165,7 +162,7 @@ class SubtitleConverter(QMainWindow):
         
         links_container = QWidget()
         links_layout = QHBoxLayout(links_container)
-        links_layout.setSpacing(20)  # Space between links
+        links_layout.setSpacing(20)
         
         github_link = QLabel()
         github_link.setText('<a href="https://github.com/xeloxa" style="color: #999999; text-decoration: none;">Github</a>')
@@ -197,10 +194,8 @@ class SubtitleConverter(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
         
-        # Top layout
         top_layout = QHBoxLayout()
         
-        # Back button
         back_btn = QPushButton('←')
         back_btn.setStyleSheet("""
             QPushButton {
@@ -218,7 +213,6 @@ class SubtitleConverter(QMainWindow):
         """)
         back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         
-        # Title and subtitle container
         title_container = QWidget()
         title_layout = QVBoxLayout(title_container)
         title_layout.setSpacing(5)
@@ -240,7 +234,6 @@ class SubtitleConverter(QMainWindow):
         
         layout.addLayout(top_layout)
         
-        # File list
         self.file_list = QListWidget()
         self.file_list.setStyleSheet("""
             QListWidget {
@@ -267,12 +260,10 @@ class SubtitleConverter(QMainWindow):
         self.file_list.itemDoubleClicked.connect(self.change_output_location)
         self.file_list.mousePressEvent = self.list_mouse_press_event
         
-        # Info label
-        info_label = QLabel('Boş alana tıklayarak panodaki metni yapıştırabilirsiniz.\nÇift tıklayarak çıktı konumunu değiştirebilirsiniz.')
+        info_label = QLabel('Click on empty area to paste text from clipboard.\nDouble click to change output location.')
         info_label.setStyleSheet('color: #999999; font-size: 12px; font-style: italic;')
         info_label.setAlignment(Qt.AlignCenter)
         
-        # Buttons
         button_layout = QHBoxLayout()
         
         select_btn = QPushButton('Add TXT File')
@@ -314,7 +305,6 @@ class SubtitleConverter(QMainWindow):
         """)
         self.input_next_btn.clicked.connect(self.start_batch_conversion)
         
-        # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setStyleSheet("""
             QProgressBar {
@@ -401,7 +391,6 @@ class SubtitleConverter(QMainWindow):
             new_files = []
             
             for input_file in files:
-                # Dosyanın zaten listede olup olmadığını kontrol et
                 is_duplicate = any(file_info['input'] == input_file for file_info in self.files_to_convert)
                 
                 if is_duplicate:
@@ -415,47 +404,41 @@ class SubtitleConverter(QMainWindow):
                     }
                     new_files.append(file_info)
             
-            # Yeni dosyaları listeye ekle
             for file_info in new_files:
                 self.files_to_convert.append(file_info)
                 self.update_list_item(len(self.files_to_convert) - 1)
             
-            # Eğer yeni dosya eklendiyse butonu aktif et
             if new_files:
                 self.input_next_btn.setEnabled(True)
             
-            # Eğer tekrar eden dosyalar varsa kullanıcıya bildir
             if duplicate_files:
                 files_str = "\n".join(duplicate_files)
                 QMessageBox.warning(
                     self,
-                    'Tekrar Eden Dosyalar',
-                    f'Aşağıdaki dosyalar zaten listede olduğu için eklenmedi:\n\n{files_str}'
+                    'Duplicate Files',
+                    f'The following files were not added because they are already in the list:\n\n{files_str}'
                 )
 
     def update_list_item(self, index):
         file_info = self.files_to_convert[index]
         
         if file_info.get('is_clipboard'):
-            input_name = "Yapıştırılan Metin"
+            input_name = "Pasted Text"
         else:
             input_name = os.path.basename(file_info['input'])
         
         output_name = os.path.basename(file_info['output'])
         
-        # Create widget for list item
         item_widget = QWidget()
         layout = QHBoxLayout(item_widget)
         layout.setContentsMargins(12, 0, 12, 0)
         layout.setSpacing(15)
         
-        # File info container
         info_container = QWidget()
         info_layout = QVBoxLayout(info_container)
         info_layout.setContentsMargins(0, 10, 0, 10)
         info_layout.setSpacing(2)
         
-        # File name label
         file_label = QLabel(input_name)
         file_label.setStyleSheet("""
             color: white;
@@ -463,7 +446,6 @@ class SubtitleConverter(QMainWindow):
             font-weight: 500;
         """)
         
-        # Output path label
         if file_info['is_default_output']:
             path_text = f"→ {output_name} (Default Location)"
         else:
@@ -479,7 +461,6 @@ class SubtitleConverter(QMainWindow):
         info_layout.addWidget(file_label)
         info_layout.addWidget(path_label)
         
-        # Remove button - Daha sade ve kompakt tasarım
         remove_btn = QPushButton("Remove")
         remove_btn.setStyleSheet("""
             QPushButton {
@@ -497,13 +478,12 @@ class SubtitleConverter(QMainWindow):
         """)
         remove_btn.setCursor(Qt.PointingHandCursor)
         remove_btn.clicked.connect(lambda: self.remove_file(index))
-        remove_btn.setFixedWidth(45)  # Daha dar genişlik
-        remove_btn.setFixedHeight(22)  # Biraz daha kısa yükseklik
+        remove_btn.setFixedWidth(45)
+        remove_btn.setFixedHeight(22)
         
         layout.addWidget(info_container, stretch=1)
         layout.addWidget(remove_btn)
         
-        # Create and set list item
         list_item = QListWidgetItem()
         list_item.setSizeHint(item_widget.sizeHint())
         
@@ -520,7 +500,6 @@ class SubtitleConverter(QMainWindow):
             self.files_to_convert.pop(index)
             self.file_list.takeItem(index)
             
-            # Update indices for remaining items
             for i in range(index, self.file_list.count()):
                 item_widget = self.file_list.itemWidget(self.file_list.item(i))
                 for child in item_widget.children():
@@ -528,7 +507,6 @@ class SubtitleConverter(QMainWindow):
                         child.clicked.disconnect()
                         child.clicked.connect(lambda checked, idx=i: self.remove_file(idx))
             
-            # Disable Start Conversion button if list is empty
             if not self.files_to_convert:
                 self.input_next_btn.setEnabled(False)
 
@@ -567,7 +545,6 @@ class SubtitleConverter(QMainWindow):
             self.update_list_item(index)
 
     def clear_file_list(self):
-        # Geçici dosyaları temizle
         for file_info in self.files_to_convert:
             if file_info.get('is_clipboard'):
                 try:
@@ -586,7 +563,6 @@ class SubtitleConverter(QMainWindow):
             QMessageBox.warning(self, 'Error', 'Please select files to convert!')
             return
             
-        # Check for existing files
         existing_files = []
         for file_info in self.files_to_convert:
             if os.path.exists(file_info['output']):
@@ -610,7 +586,6 @@ class SubtitleConverter(QMainWindow):
         self.progress_bar.show()
         self.progress_label.show()
         
-        # File access check
         for file_info in self.files_to_convert:
             if not os.path.exists(file_info['input']):
                 QMessageBox.warning(self, 'Error', f"File not found: {file_info['input']}")
@@ -737,8 +712,8 @@ class SubtitleConverter(QMainWindow):
             if text.strip():
                 reply = QMessageBox.question(
                     self,
-                    'Metin Yapıştır',
-                    'Panodaki metni yapıştırmak istiyor musunuz?',
+                    'Paste Text',
+                    'Do you want to paste text from clipboard?',
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.Yes
                 )
@@ -746,7 +721,6 @@ class SubtitleConverter(QMainWindow):
                 if reply == QMessageBox.Yes:
                     self.paste_clipboard_text()
         
-        # Orijinal mouse press olayını çağır
         super(QListWidget, self.file_list).mousePressEvent(event)
 
     def paste_clipboard_text(self):
@@ -754,8 +728,42 @@ class SubtitleConverter(QMainWindow):
         text = clipboard.text()
         
         if not text.strip():
-            QMessageBox.warning(self, 'Hata', 'Panoda metin bulunamadı!')
+            QMessageBox.warning(self, 'Error', 'No text found in clipboard!')
             return
+        
+        output_file, _ = QFileDialog.getSaveFileName(
+            self,
+            'Save Output File',
+            os.path.expanduser('~/Desktop/clipboard_text.srt'),
+            'SRT Files (*.srt)'
+        )
+        
+        if not output_file:
+            return
+        
+        if not output_file.lower().endswith('.srt'):
+            output_file += '.srt'
+        
+        for file_info in self.files_to_convert:
+            if file_info['output'] == output_file:
+                QMessageBox.warning(
+                    self,
+                    'Duplicate Output',
+                    f'The output file "{os.path.basename(output_file)}" already exists in the list.\nPlease choose a different name.'
+                )
+                return
+        
+        # Dosya sisteminde aynı isimde dosya var mı kontrol et
+        if os.path.exists(output_file):
+            reply = QMessageBox.question(
+                self,
+                'Dosya Zaten Var',
+                f'"{os.path.basename(output_file)}" dosyası zaten mevcut.\nÜzerine yazmak istiyor musunuz?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
         
         # Geçici dosya oluştur
         import tempfile
@@ -766,12 +774,11 @@ class SubtitleConverter(QMainWindow):
             with open(temp_input, 'w', encoding='utf-8') as f:
                 f.write(text)
             
-            output_file = os.path.join(temp_dir, 'clipboard_text.srt')
             file_info = {
                 'input': temp_input,
                 'output': output_file,
-                'is_default_output': True,
-                'is_clipboard': True  # Panodan geldiğini belirtmek için
+                'is_default_output': False,
+                'is_clipboard': True
             }
             
             self.files_to_convert.append(file_info)
