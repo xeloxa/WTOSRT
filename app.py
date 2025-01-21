@@ -232,19 +232,37 @@ class SubtitleConverter(QMainWindow):
         self.file_list = QListWidget()
         self.file_list.setStyleSheet("""
             QListWidget {
-                background-color: #2a2a2a;
-                border: 1px solid #333333;
-                border-radius: 5px;
+                background-color: #1E1E1E;
+                border: none;
+                border-radius: 8px;
                 color: #ffffff;
-                padding: 5px;
+                padding: 8px;
                 min-height: 200px;
             }
             QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #333333;
+                background-color: #2A2A2A;
+                border-radius: 6px;
+                margin: 4px;
+            }
+            QListWidget::item:hover {
+                background-color: #323232;
             }
             QListWidget::item:selected {
                 background-color: #2d5af5;
+            }
+            QPushButton#removeButton {
+                background-color: #FF4757;
+                color: white;
+                border: none;
+                padding: 6px 16px;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: 500;
+                min-width: 70px;
+            }
+            QPushButton#removeButton:hover {
+                background-color: #FF6B81;
+                transition: background-color 0.3s;
             }
         """)
         self.file_list.itemDoubleClicked.connect(self.change_output_location)
@@ -276,6 +294,24 @@ class SubtitleConverter(QMainWindow):
         
         self.input_next_btn = QPushButton('Start Conversion')
         self.input_next_btn.setEnabled(False)
+        self.input_next_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                padding: 15px 30px;
+                border-radius: 5px;
+                font-size: 16px;
+                min-width: 200px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+            QPushButton:disabled {
+                background-color: #333333;
+                color: #666666;
+            }
+        """)
         self.input_next_btn.clicked.connect(self.start_batch_conversion)
         
         # Progress bar
@@ -378,21 +414,89 @@ class SubtitleConverter(QMainWindow):
         input_name = os.path.basename(file_info['input'])
         output_name = os.path.basename(file_info['output'])
         
+        # Create widget for list item
+        item_widget = QWidget()
+        layout = QHBoxLayout(item_widget)
+        layout.setContentsMargins(12, 0, 12, 0)  # Üst ve alt margin'i 0 yap
+        layout.setSpacing(15)
+        
+        # File info container
+        info_container = QWidget()
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 10, 0, 10)  # İçerik için üst ve alt padding ekle
+        info_layout.setSpacing(2)
+        
+        # File name label
+        file_label = QLabel(input_name)
+        file_label.setStyleSheet("""
+            color: white;
+            font-size: 14px;
+            font-weight: 500;
+        """)
+        
+        # Output path label
         if file_info['is_default_output']:
-            text = f"{input_name} → {output_name} (Default Location)"
-            color = '#2d5af5'
+            path_text = f"→ {output_name} (Default Location)"
         else:
-            text = f"{input_name} → {output_name} (Custom Location)"
-            color = '#999999'
+            output_path = os.path.dirname(file_info['output'])
+            path_text = f"→ {output_name} ({output_path})"
             
+        path_label = QLabel(path_text)
+        path_label.setStyleSheet("""
+            color: #8E8E8E;
+            font-size: 12px;
+        """)
+        
+        info_layout.addWidget(file_label)
+        info_layout.addWidget(path_label)
+        
+        # Remove button container
+        button_container = QWidget()
+        button_layout = QVBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setAlignment(Qt.AlignCenter)  # Dikey ortalama
+        
+        # Remove button
+        remove_btn = QPushButton("Kaldır")
+        remove_btn.setObjectName("removeButton")
+        remove_btn.setCursor(Qt.PointingHandCursor)
+        remove_btn.clicked.connect(lambda: self.remove_file(index))
+        remove_btn.setFixedWidth(80)
+        remove_btn.setFixedHeight(32)
+        
+        button_layout.addWidget(remove_btn)
+        
+        layout.addWidget(info_container, stretch=1)
+        layout.addWidget(button_container)
+        
+        # Create and set list item
+        list_item = QListWidgetItem()
+        list_item.setSizeHint(item_widget.sizeHint())
+        
         if index < self.file_list.count():
-            item = self.file_list.item(index)
-            item.setText(text)
-            item.setForeground(Qt.GlobalColor.white)
+            self.file_list.takeItem(index)
+            self.file_list.insertItem(index, list_item)
         else:
-            item = QListWidgetItem(text)
-            item.setForeground(Qt.GlobalColor.white)
-            self.file_list.addItem(item)
+            self.file_list.addItem(list_item)
+        
+        self.file_list.setItemWidget(list_item, item_widget)
+
+    def remove_file(self, index):
+        if 0 <= index < len(self.files_to_convert):
+            self.files_to_convert.pop(index)
+            self.file_list.takeItem(index)
+            
+            # Güncellenen liste için indexleri yeniden düzenle
+            for i in range(index, self.file_list.count()):
+                item_widget = self.file_list.itemWidget(self.file_list.item(i))
+                for child in item_widget.children():
+                    if isinstance(child, QPushButton):
+                        child.clicked.disconnect()
+                        child.clicked.connect(lambda checked, idx=i: self.remove_file(idx))
+            
+            # Eğer liste boşsa Start Conversion butonunu devre dışı bırak
+            if not self.files_to_convert:
+                self.input_next_btn.setEnabled(False)
 
     def change_output_location(self, item):
         index = self.file_list.row(item)
@@ -412,6 +516,18 @@ class SubtitleConverter(QMainWindow):
             if not new_output.lower().endswith('.srt'):
                 new_output += '.srt'
             
+            if os.path.exists(new_output):
+                reply = QMessageBox.question(
+                    self,
+                    'Dosya Zaten Var',
+                    f'"{os.path.basename(new_output)}" dosyası zaten mevcut.\nÜzerine yazmak istiyor musunuz?',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.No:
+                    return
+            
             self.files_to_convert[index]['output'] = new_output
             self.files_to_convert[index]['is_default_output'] = False
             self.update_list_item(index)
@@ -425,8 +541,27 @@ class SubtitleConverter(QMainWindow):
 
     def start_batch_conversion(self):
         if not self.files_to_convert:
-            QMessageBox.warning(self, 'Error', 'Please select files to convert!')
+            QMessageBox.warning(self, 'Hata', 'Lütfen dönüştürülecek dosyaları seçin!')
             return
+            
+        # Var olan dosyaları kontrol et
+        existing_files = []
+        for file_info in self.files_to_convert:
+            if os.path.exists(file_info['output']):
+                existing_files.append(os.path.basename(file_info['output']))
+        
+        if existing_files:
+            files_str = "\n".join(existing_files)
+            reply = QMessageBox.question(
+                self,
+                'Dosyalar Zaten Var',
+                f'Aşağıdaki dosyalar zaten mevcut:\n\n{files_str}\n\nÜzerine yazmak istiyor musunuz?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.No:
+                return
             
         self.input_next_btn.setEnabled(False)
         self.progress_bar.setValue(0)
@@ -436,7 +571,7 @@ class SubtitleConverter(QMainWindow):
         # File access check
         for file_info in self.files_to_convert:
             if not os.path.exists(file_info['input']):
-                QMessageBox.warning(self, 'Error', f"File not found: {file_info['input']}")
+                QMessageBox.warning(self, 'Hata', f"Dosya bulunamadı: {file_info['input']}")
                 self.input_next_btn.setEnabled(True)
                 return
                 
@@ -445,7 +580,7 @@ class SubtitleConverter(QMainWindow):
                 try:
                     os.makedirs(output_dir)
                 except Exception as e:
-                    QMessageBox.warning(self, 'Error', f"Could not create output directory: {output_dir}\n{str(e)}")
+                    QMessageBox.warning(self, 'Hata', f"Çıktı dizini oluşturulamadı: {output_dir}\n{str(e)}")
                     self.input_next_btn.setEnabled(True)
                     return
         
