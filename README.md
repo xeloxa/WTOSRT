@@ -12,9 +12,9 @@ Bu araç, [Hugging Face Space](https://huggingface.co/spaces/sanchit-gandhi/whis
 
 Arayüz görünümü:
 
-![[pictures/1.png]]
-![[pictures/2.png]]
-![[pictures/3.png]]
+![[1.png]]
+![[2.png]]
+![[3.png]]
 
 ## Kurulum ve Gereksinimler
 
