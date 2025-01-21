@@ -262,25 +262,13 @@ class SubtitleConverter(QMainWindow):
             QListWidget::item:selected {
                 background-color: #2d5af5;
             }
-            QPushButton#removeButton {
-                background-color: #FF4757;
-                color: white;
-                border: none;
-                padding: 6px 16px;
-                border-radius: 4px;
-                font-size: 13px;
-                font-weight: 500;
-                min-width: 70px;
-            }
-            QPushButton#removeButton:hover {
-                background-color: #FF6B81;
-                transition: background-color 0.3s;
-            }
         """)
+        self.file_list.setAcceptDrops(True)
         self.file_list.itemDoubleClicked.connect(self.change_output_location)
+        self.file_list.mousePressEvent = self.list_mouse_press_event
         
         # Info label
-        info_label = QLabel('Tip: Double click on a file in the list to change output location\nOnly .txt files are supported.')
+        info_label = QLabel('Boş alana tıklayarak panodaki metni yapıştırabilirsiniz.\nÇift tıklayarak çıktı konumunu değiştirebilirsiniz.')
         info_label.setStyleSheet('color: #999999; font-size: 12px; font-style: italic;')
         info_label.setAlignment(Qt.AlignCenter)
         
@@ -447,7 +435,12 @@ class SubtitleConverter(QMainWindow):
 
     def update_list_item(self, index):
         file_info = self.files_to_convert[index]
-        input_name = os.path.basename(file_info['input'])
+        
+        if file_info.get('is_clipboard'):
+            input_name = "Yapıştırılan Metin"
+        else:
+            input_name = os.path.basename(file_info['input'])
+        
         output_name = os.path.basename(file_info['output'])
         
         # Create widget for list item
@@ -486,24 +479,29 @@ class SubtitleConverter(QMainWindow):
         info_layout.addWidget(file_label)
         info_layout.addWidget(path_label)
         
-        # Remove button container
-        button_container = QWidget()
-        button_layout = QVBoxLayout(button_container)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setAlignment(Qt.AlignCenter)
-        
-        # Remove button
+        # Remove button - Daha sade ve kompakt tasarım
         remove_btn = QPushButton("Remove")
-        remove_btn.setObjectName("removeButton")
+        remove_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ff3b30;
+                color: white;
+                border: none;
+                padding: 3px 8px;
+                border-radius: 2px;
+                font-size: 11px;
+                min-width: 45px;
+            }
+            QPushButton:hover {
+                background-color: #d63029;
+            }
+        """)
         remove_btn.setCursor(Qt.PointingHandCursor)
         remove_btn.clicked.connect(lambda: self.remove_file(index))
-        remove_btn.setFixedWidth(80)
-        remove_btn.setFixedHeight(32)
-        
-        button_layout.addWidget(remove_btn)
+        remove_btn.setFixedWidth(45)  # Daha dar genişlik
+        remove_btn.setFixedHeight(22)  # Biraz daha kısa yükseklik
         
         layout.addWidget(info_container, stretch=1)
-        layout.addWidget(button_container)
+        layout.addWidget(remove_btn)
         
         # Create and set list item
         list_item = QListWidgetItem()
@@ -569,6 +567,14 @@ class SubtitleConverter(QMainWindow):
             self.update_list_item(index)
 
     def clear_file_list(self):
+        # Geçici dosyaları temizle
+        for file_info in self.files_to_convert:
+            if file_info.get('is_clipboard'):
+                try:
+                    os.remove(file_info['input'])
+                except:
+                    pass
+                
         self.file_list.clear()
         self.files_to_convert.clear()
         self.input_next_btn.setEnabled(False)
@@ -722,6 +728,58 @@ class SubtitleConverter(QMainWindow):
         minutes, seconds = divmod(seconds, 60)
         hours, minutes = divmod(minutes, 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+    def list_mouse_press_event(self, event):
+        if event.button() == Qt.LeftButton and not self.file_list.itemAt(event.pos()):
+            clipboard = QApplication.clipboard()
+            text = clipboard.text()
+            
+            if text.strip():
+                reply = QMessageBox.question(
+                    self,
+                    'Metin Yapıştır',
+                    'Panodaki metni yapıştırmak istiyor musunuz?',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Yes:
+                    self.paste_clipboard_text()
+        
+        # Orijinal mouse press olayını çağır
+        super(QListWidget, self.file_list).mousePressEvent(event)
+
+    def paste_clipboard_text(self):
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        
+        if not text.strip():
+            QMessageBox.warning(self, 'Hata', 'Panoda metin bulunamadı!')
+            return
+        
+        # Geçici dosya oluştur
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_input = os.path.join(temp_dir, 'clipboard_text.txt')
+        
+        try:
+            with open(temp_input, 'w', encoding='utf-8') as f:
+                f.write(text)
+            
+            output_file = os.path.join(temp_dir, 'clipboard_text.srt')
+            file_info = {
+                'input': temp_input,
+                'output': output_file,
+                'is_default_output': True,
+                'is_clipboard': True  # Panodan geldiğini belirtmek için
+            }
+            
+            self.files_to_convert.append(file_info)
+            self.update_list_item(len(self.files_to_convert) - 1)
+            self.input_next_btn.setEnabled(True)
+            
+        except Exception as e:
+            QMessageBox.critical(self, 'Hata', f'Metin yapıştırılırken hata oluştu:\n{str(e)}')
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
