@@ -10,6 +10,12 @@ Bu araç, [Hugging Face Space](https://huggingface.co/spaces/sanchit-gandhi/whis
 - Hata kontrol mekanizması
 - Açık kaynak kodlu
 
+Arayüz görünümü:
+
+![Ana Pencere](pictures/main_window.png)
+![Dönüştürme Başarılı](pictures/success.png)
+![Hata Mesajı](pictures/error.png)
+
 ## Kurulum ve Gereksinimler
 
 **NOT:** Python veya pip komutları çalışmazsa, python3 veya pip3 olarak deneyiniz.
