@@ -2,95 +2,90 @@ import re
 import sys
 import os
 import functools
-from typing import List, Dict, Optional
-from dataclasses import dataclass
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QFileDialog, QMessageBox, QStackedWidget,
                             QListWidget, QProgressBar, QListWidgetItem)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
-
-@dataclass
-class FileInfo:
-    input_path: str
-    output_path: str
-    is_default_output: bool = True
-    is_clipboard: bool = False
+from PyQt5.QtCore import QSettings
 
 class ConversionWorker(QThread):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, input_files: List[FileInfo], batch_size: int = 100):
+    def __init__(self, input_files, batch_size=100):
         super().__init__()
         self.input_files = input_files
         self.batch_size = batch_size
         self._is_cancelled = False
 
-    def run(self) -> None:
+    def run(self):
         try:
-            self._process_files_in_batches()
+            self.process_files_in_batches()
         except Exception as e:
             self.error.emit(str(e))
         finally:
             self.finished.emit()
 
-    def _process_files_in_batches(self) -> None:
+    def process_files_in_batches(self):
+        """Dosyaları batch'ler halinde işler."""
         total = len(self.input_files)
         for i in range(0, total, self.batch_size):
             if self._is_cancelled:
                 break
+                
             batch = self.input_files[i:i + self.batch_size]
-            self._process_batch(batch, i, total)
+            self.process_batch(batch, i, total)
 
-    def cancel(self) -> None:
+    def cancel(self):
+        """Dönüştürme işlemini iptal eder."""
         self._is_cancelled = True
 
-    def _process_batch(self, batch: List[FileInfo], index: int, total: int) -> None:
+    def process_batch(self, batch, index, total):
         for i, file_info in enumerate(batch):
             try:
-                self._convert_file(file_info.input_path, file_info.output_path)
-                progress = int(((i + index) / total) * 100)
-                self.progress.emit(progress, os.path.basename(file_info.input_path))
-            except Exception as e:
-                self.error.emit(f"{os.path.basename(file_info.input_path)}: {str(e)}")
-
-    def _convert_file(self, input_path: str, output_path: str) -> None:
-        with open(input_path, "r", encoding='utf-8') as infile, \
-             open(output_path, "w", encoding='utf-8') as outfile:
-            
-            subtitle_index = 1
-            for line in infile:
-                time_match = re.search(r'\[(\d+:\d+\.\d+)\s*->\s*(\d+:\d+\.\d+)\]', line)
-                if not time_match:
-                    continue
-
-                start_time = self._time_to_seconds(time_match.group(1))
-                end_time = self._time_to_seconds(time_match.group(2))
+                input_file = file_info['input']
+                output_file = file_info['output']
                 
-                if start_time >= end_time:
-                    continue
+                with open(input_file, "r", encoding='utf-8') as infile:
+                    lines = infile.readlines()
+                
+                with open(output_file, "w", encoding='utf-8') as outfile:
+                    subtitle_index = 1
+                    
+                    for line in lines:
+                        time_match = re.search(r'\[(\d+:\d+\.\d+)\s*->\s*(\d+:\d+\.\d+)\]', line)
+                        
+                        if time_match:
+                            start_time = self.time_to_seconds(time_match.group(1))
+                            end_time = self.time_to_seconds(time_match.group(2))
+                            
+                            if start_time >= end_time:
+                                continue
+                                
+                            outfile.write(f"{subtitle_index}\n")
+                            outfile.write(f"{self.format_time(start_time)} --> {self.format_time(end_time)}\n")
+                            
+                            text = re.sub(r'\[.*?\]', '', line).strip()
+                            if text:
+                                outfile.write(f"{text}\n\n")
+                                subtitle_index += 1
+                
+                progress = int(((i + index) / total) * 100)
+                self.progress.emit(progress, os.path.basename(input_file))
+            except Exception as e:
+                self.error.emit(f"{os.path.basename(input_file)}: {str(e)}")
+                continue
 
-                text = re.sub(r'\[.*?\]', '', line).strip()
-                if not text:
-                    continue
-
-                outfile.write(f"{subtitle_index}\n")
-                outfile.write(f"{self._format_time(start_time)} --> {self._format_time(end_time)}\n")
-                outfile.write(f"{text}\n\n")
-                subtitle_index += 1
-
-    @staticmethod
-    def _time_to_seconds(timestamp: str) -> float:
+    def time_to_seconds(self, timestamp):
         try:
             m, s = map(float, timestamp.split(':'))
             return max(0, m * 60 + s)
         except ValueError:
             raise ValueError(f"Invalid time format: {timestamp}")
 
-    @staticmethod
-    def _format_time(seconds: float) -> str:
+    def format_time(self, seconds):
         milliseconds = int((seconds - int(seconds)) * 1000)
         seconds = int(seconds)
         minutes, seconds = divmod(seconds, 60)
@@ -100,29 +95,32 @@ class ConversionWorker(QThread):
 class SubtitleConverter(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.files_to_convert: List[FileInfo] = []
-        self._setup_ui()
-        self._setup_connections()
-        self._load_settings()
+        self.files_to_convert = []  # Dosya listesini başlat
+        self.setup_ui()
+        self.setup_connections()
+        self.load_settings()
 
-    def _setup_ui(self) -> None:
+    def setup_ui(self):
+        """Kullanıcı arayüzünü hazırlar."""
         self.setWindowTitle('Whisper Timestamp to SRT')
-        self.setGeometry(100, 100, 800, 600)
-        self._init_ui()
+        self.setGeometry(100, 100, 800, 600)  # Pencere boyutunu ayarla
+        self.initUI()  # Mevcut UI kurulum metodunu çağır
 
-    def _setup_connections(self) -> None:
+    def setup_connections(self):
+        """Sinyal ve yuva bağlantılarını kurar."""
         if hasattr(self, 'file_list'):
-            self.file_list.itemDoubleClicked.connect(self._change_output_location)
+            self.file_list.itemDoubleClicked.connect(self.change_output_location)
         if hasattr(self, 'input_next_btn'):
-            self.input_next_btn.clicked.connect(self._start_batch_conversion)
+            self.input_next_btn.clicked.connect(self.start_batch_conversion)
 
-    def _load_settings(self) -> None:
+    def load_settings(self):
+        """Uygulama ayarlarını yükler."""
         settings = QSettings('XeloxaSoft', 'WhisperToSRT')
         geometry = settings.value('geometry')
         if geometry:
             self.restoreGeometry(geometry)
 
-    def _init_ui(self):
+    def initUI(self):
         self.setWindowTitle('Whisper Timestamp to SRT')
         self.setGeometry(100, 100, 600, 400)
         self.setStyleSheet("""
@@ -174,7 +172,7 @@ class SubtitleConverter(QMainWindow):
         self.create_output_page()
         self.create_complete_page()
         
-    def create_welcome_page(self) -> None:
+    def create_welcome_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
@@ -208,7 +206,27 @@ class SubtitleConverter(QMainWindow):
         start_btn = QPushButton('Start')
         start_btn.clicked.connect(lambda: self.stack.setCurrentIndex(1))
         
-        links_container = self._create_links_container()
+        links_container = QWidget()
+        links_layout = QHBoxLayout(links_container)
+        links_layout.setSpacing(20)
+        
+        github_link = QLabel()
+        github_link.setText('<a href="https://github.com/xeloxa" style="color: #999999; text-decoration: none;">Github</a>')
+        github_link.setOpenExternalLinks(True)
+        
+        website_link = QLabel()
+        website_link.setText('<a href="https://xeloxa.netlify.app" style="color: #999999; text-decoration: none;">Website</a>')
+        website_link.setOpenExternalLinks(True)
+        
+        contact_link = QLabel()
+        contact_link.setText('<a href="mailto:alisunbul@proton.me" style="color: #999999; text-decoration: none;">Contact</a>')
+        contact_link.setOpenExternalLinks(True)
+        
+        links_layout.addStretch()
+        links_layout.addWidget(github_link)
+        links_layout.addWidget(website_link)
+        links_layout.addWidget(contact_link)
+        links_layout.addStretch()
         
         layout.addWidget(title)
         layout.addWidget(desc)
@@ -216,28 +234,7 @@ class SubtitleConverter(QMainWindow):
         layout.addWidget(links_container)
         
         self.stack.addWidget(page)
-
-    def _create_links_container(self) -> QWidget:
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setSpacing(20)
         
-        links = {
-            'Github': 'https://github.com/xeloxa',
-            'Website': 'https://xeloxa.netlify.app',
-            'Contact': 'mailto:alisunbul@proton.me'
-        }
-        
-        layout.addStretch()
-        for text, url in links.items():
-            link = QLabel()
-            link.setText(f'<a href="{url}" style="color: #999999; text-decoration: none;">{text}</a>')
-            link.setOpenExternalLinks(True)
-            layout.addWidget(link)
-        layout.addStretch()
-        
-        return container
-
     def create_input_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -306,7 +303,7 @@ class SubtitleConverter(QMainWindow):
             }
         """)
         self.file_list.setAcceptDrops(True)
-        self.file_list.itemDoubleClicked.connect(self._change_output_location)
+        self.file_list.itemDoubleClicked.connect(self.change_output_location)
         self.file_list.mousePressEvent = self.list_mouse_press_event
         
         info_label = QLabel('Click on empty area to paste text from clipboard.\nDouble click to change output location.')
@@ -352,7 +349,7 @@ class SubtitleConverter(QMainWindow):
                 color: #666666;
             }
         """)
-        self.input_next_btn.clicked.connect(self._start_batch_conversion)
+        self.input_next_btn.clicked.connect(self.start_batch_conversion)
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setStyleSheet("""
@@ -396,16 +393,17 @@ class SubtitleConverter(QMainWindow):
         self.output_label.setAlignment(Qt.AlignCenter)
         
         select_btn = QPushButton('Choose Save Location')
-        select_btn.clicked.connect(self._select_output_file)
+        select_btn.clicked.connect(self.select_output_file)
         
-        self.convert_btn = QPushButton('Convert')
-        self.convert_btn.setEnabled(False)
-        self.convert_btn.clicked.connect(self._start_conversion)
+        convert_btn = QPushButton('Convert')
+        convert_btn.setEnabled(False)
+        convert_btn.clicked.connect(self.start_conversion)
+        self.convert_btn = convert_btn
         
         layout.addWidget(title)
         layout.addWidget(self.output_label)
         layout.addWidget(select_btn, alignment=Qt.AlignCenter)
-        layout.addWidget(self.convert_btn, alignment=Qt.AlignCenter)
+        layout.addWidget(convert_btn, alignment=Qt.AlignCenter)
         
         self.stack.addWidget(page)
         
@@ -419,7 +417,7 @@ class SubtitleConverter(QMainWindow):
         title.setAlignment(Qt.AlignCenter)
         
         restart_btn = QPushButton('New Conversion')
-        restart_btn.clicked.connect(self._restart_conversion)
+        restart_btn.clicked.connect(self.restart_conversion)
         
         layout.addWidget(title)
         layout.addWidget(restart_btn, alignment=Qt.AlignCenter)
@@ -439,13 +437,17 @@ class SubtitleConverter(QMainWindow):
             new_files = []
             
             for input_file in files:
-                is_duplicate = any(file_info.input_path == input_file for file_info in self.files_to_convert)
+                is_duplicate = any(file_info['input'] == input_file for file_info in self.files_to_convert)
                 
                 if is_duplicate:
                     duplicate_files.append(os.path.basename(input_file))
                 else:
                     output_file = input_file.rsplit('.', 1)[0] + '.srt'
-                    file_info = FileInfo(input_path=input_file, output_path=output_file)
+                    file_info = {
+                        'input': input_file,
+                        'output': output_file,
+                        'is_default_output': True
+                    }
                     new_files.append(file_info)
             
             for file_info in new_files:
@@ -466,12 +468,12 @@ class SubtitleConverter(QMainWindow):
     def update_list_item(self, index):
         file_info = self.files_to_convert[index]
         
-        if file_info.is_clipboard:
+        if file_info.get('is_clipboard'):
             input_name = "Pasted Text"
         else:
-            input_name = os.path.basename(file_info.input_path)
+            input_name = os.path.basename(file_info['input'])
         
-        output_name = os.path.basename(file_info.output_path)
+        output_name = os.path.basename(file_info['output'])
         
         item_widget = QWidget()
         layout = QHBoxLayout(item_widget)
@@ -490,10 +492,10 @@ class SubtitleConverter(QMainWindow):
             font-weight: 500;
         """)
         
-        if file_info.is_default_output:
+        if file_info['is_default_output']:
             path_text = f"→ {output_name} (Default Location)"
         else:
-            output_path = os.path.dirname(file_info.output_path)
+            output_path = os.path.dirname(file_info['output'])
             path_text = f"→ {output_name} ({output_path})"
             
         path_label = QLabel(path_text)
@@ -554,12 +556,12 @@ class SubtitleConverter(QMainWindow):
             if not self.files_to_convert:
                 self.input_next_btn.setEnabled(False)
 
-    def _change_output_location(self, item):
+    def change_output_location(self, item):
         index = self.file_list.row(item)
         file_info = self.files_to_convert[index]
         
-        default_name = os.path.basename(file_info.output_path)
-        default_dir = os.path.dirname(file_info.output_path)
+        default_name = os.path.basename(file_info['output'])
+        default_dir = os.path.dirname(file_info['output'])
         
         new_output, _ = QFileDialog.getSaveFileName(
             self,
@@ -584,15 +586,15 @@ class SubtitleConverter(QMainWindow):
                 if reply == QMessageBox.No:
                     return
             
-            self.files_to_convert[index].output_path = new_output
-            self.files_to_convert[index].is_default_output = False
+            self.files_to_convert[index]['output'] = new_output
+            self.files_to_convert[index]['is_default_output'] = False
             self.update_list_item(index)
 
     def clear_file_list(self):
         for file_info in self.files_to_convert:
-            if file_info.is_clipboard:
+            if file_info.get('is_clipboard'):
                 try:
-                    os.remove(file_info.input_path)
+                    os.remove(file_info['input'])
                 except:
                     pass
                 
@@ -602,15 +604,15 @@ class SubtitleConverter(QMainWindow):
         self.progress_bar.hide()
         self.progress_label.hide()
 
-    def _start_batch_conversion(self):
+    def start_batch_conversion(self):
         if not self.files_to_convert:
             QMessageBox.warning(self, 'Error', 'Please select files to convert!')
             return
             
         existing_files = []
         for file_info in self.files_to_convert:
-            if os.path.exists(file_info.output_path):
-                existing_files.append(os.path.basename(file_info.output_path))
+            if os.path.exists(file_info['output']):
+                existing_files.append(os.path.basename(file_info['output']))
         
         if existing_files:
             files_str = "\n".join(existing_files)
@@ -631,12 +633,12 @@ class SubtitleConverter(QMainWindow):
         self.progress_label.show()
         
         for file_info in self.files_to_convert:
-            if not os.path.exists(file_info.input_path):
-                QMessageBox.warning(self, 'Error', f"File not found: {file_info.input_path}")
+            if not os.path.exists(file_info['input']):
+                QMessageBox.warning(self, 'Error', f"File not found: {file_info['input']}")
                 self.input_next_btn.setEnabled(True)
                 return
                 
-            output_dir = os.path.dirname(file_info.output_path)
+            output_dir = os.path.dirname(file_info['output'])
             if not os.path.exists(output_dir):
                 try:
                     os.makedirs(output_dir)
@@ -664,9 +666,9 @@ class SubtitleConverter(QMainWindow):
     def show_error(self, message):
         QMessageBox.warning(self, 'Error', message)
 
-    def _select_output_file(self):
-        default_dir = os.path.dirname(self.files_to_convert[0].input_path) if self.files_to_convert else ''
-        default_name = os.path.basename(self.files_to_convert[0].output_path) if self.files_to_convert else 'subtitle.srt'
+    def select_output_file(self):
+        default_dir = os.path.dirname(self.files_to_convert[0]['input']) if self.files_to_convert else ''
+        default_name = os.path.basename(self.files_to_convert[0]['output']) if self.files_to_convert else 'subtitle.srt'
         default_path = os.path.join(default_dir, default_name)
         
         file_name, _ = QFileDialog.getSaveFileName(
@@ -679,94 +681,71 @@ class SubtitleConverter(QMainWindow):
         if file_name:
             if not file_name.lower().endswith('.srt'):
                 file_name += '.srt'
-            self.files_to_convert[0].output_path = file_name
+            self.files_to_convert[0]['output'] = file_name
             self.output_label.setText(f'Selected: {file_name}')
             self.output_label.setStyleSheet('color: #999999; margin-bottom: 30px;')
             self.convert_btn.setEnabled(True)
             
-    def _start_conversion(self):
+    def start_conversion(self):
         try:
             self.convert_subtitles()
             self.stack.setCurrentIndex(3)
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'An error occurred during conversion:\n{str(e)}')
             
-    def _restart_conversion(self):
+    def restart_conversion(self):
         self.files_to_convert.clear()
         self.output_label.setText('No location selected')
         self.input_next_btn.setEnabled(False)
         self.convert_btn.setEnabled(False)
         self.stack.setCurrentIndex(0)
 
-    def convert_subtitles(self) -> None:
-        if not self._validate_conversion():
+    def convert_subtitles(self):
+        """Altyazı dosyasını SRT formatına dönüştürür."""
+        if not self.validate_conversion():
             return
         
         try:
-            with open(self.files_to_convert[0].input_path, "r", encoding='utf-8') as infile:
+            with open(self.files_to_convert[0]['input'], "r", encoding='utf-8') as infile:
                 lines = infile.readlines()
                 
-            self._process_subtitle_conversion(lines)
-            self._show_success_message()
+            self.process_subtitle_conversion(lines)
+            self.show_success_message()
             
         except FileNotFoundError:
-            QMessageBox.critical(self, 'Error', 'Source file not found.')
+            QMessageBox.critical(self, 'Hata', 'Kaynak dosya bulunamadı.')
         except PermissionError:
-            QMessageBox.critical(self, 'Error', 'Permission denied when accessing file.')
+            QMessageBox.critical(self, 'Hata', 'Dosya erişim izni reddedildi.')
         except Exception as e:
-            QMessageBox.critical(self, 'Error', f'An error occurred during conversion:\n{str(e)}')
+            QMessageBox.critical(self, 'Hata', f'Dönüştürme sırasında hata oluştu:\n{str(e)}')
 
-    def _validate_conversion(self) -> bool:
+    def validate_conversion(self):
+        """Dönüştürme işlemi için gerekli kontrolleri yapar."""
         if not self.files_to_convert:
-            QMessageBox.warning(self, 'Error', 'Please select files to convert!')
+            QMessageBox.warning(self, 'Hata', 'Lütfen dönüştürülecek dosyaları seçin!')
             return False
         
-        if not os.path.exists(self.files_to_convert[0].input_path):
-            QMessageBox.warning(self, 'Error', 'Source file not found!')
+        if not os.path.exists(self.files_to_convert[0]['input']):
+            QMessageBox.warning(self, 'Hata', 'Kaynak dosya bulunamadı!')
             return False
         
         return True
 
-    def _process_subtitle_conversion(self, lines: List[str]) -> None:
+    def process_subtitle_conversion(self, lines):
+        """Altyazı dönüştürme işlemini gerçekleştirir."""
         total_lines = len(lines)
-        with open(self.files_to_convert[0].output_path, "w", encoding='utf-8') as outfile:
+        with open(self.files_to_convert[0]['output'], "w", encoding='utf-8') as outfile:
             subtitle_index = 1
             
             for current_line, line in enumerate(lines, 1):
-                self._update_conversion_progress(current_line, total_lines)
+                self.update_conversion_progress(current_line, total_lines)
                 
-                if subtitle := self._parse_subtitle_line(line, subtitle_index):
+                if subtitle := self.parse_subtitle_line(line, subtitle_index):
                     outfile.write(subtitle)
                     subtitle_index += 1
 
-    def _show_success_message(self) -> None:
-        QMessageBox.information(
-            self, 
-            'Success', 
-            f'Conversion completed!\nFile saved as: {self.files_to_convert[0].output_path}'
-        )
-
-    def _parse_subtitle_line(self, line: str, index: int) -> Optional[str]:
-        time_match = re.search(r'\[(\d+:\d+\.\d+)\s*->\s*(\d+:\d+\.\d+)\]', line)
-        if not time_match:
-            return None
-
-        start_time = self._time_to_seconds(time_match.group(1))
-        end_time = self._time_to_seconds(time_match.group(2))
-        
-        if start_time >= end_time:
-            return None
-
-        text = re.sub(r'\[.*?\]', '', line).strip()
-        if not text:
-            return None
-
-        return f"{index}\n{self._format_time(start_time)} --> {self._format_time(end_time)}\n{text}\n\n"
-
-    def _update_conversion_progress(self, current: int, total: int) -> None:
-        progress = int((current / total) * 100)
-        self.progress_bar.setValue(progress)
-        self.progress_label.setText(f'Converting: {current}/{total} lines')
+    def show_success_message(self):
+        QMessageBox.information(self, 'Success', f'Conversion completed!\nFile saved as: {self.files_to_convert[0]["output"]}')
 
     def list_mouse_press_event(self, event):
         if event.button() == Qt.LeftButton and not self.file_list.itemAt(event.pos()):
@@ -787,7 +766,7 @@ class SubtitleConverter(QMainWindow):
         
         super(QListWidget, self.file_list).mousePressEvent(event)
 
-    def paste_clipboard_text(self) -> None:
+    def paste_clipboard_text(self):
         clipboard = QApplication.clipboard()
         text = clipboard.text()
         
@@ -795,30 +774,6 @@ class SubtitleConverter(QMainWindow):
             QMessageBox.warning(self, 'Error', 'No text found in clipboard!')
             return
         
-        output_file = self._get_output_file_path()
-        if not output_file:
-            return
-        
-        if not self._validate_output_file(output_file):
-            return
-        
-        try:
-            temp_input = self._create_temp_file(text)
-            file_info = FileInfo(
-                input_path=temp_input, 
-                output_path=output_file, 
-                is_clipboard=True,
-                is_default_output=False
-            )
-            
-            self.files_to_convert.append(file_info)
-            self.update_list_item(len(self.files_to_convert) - 1)
-            self.input_next_btn.setEnabled(True)
-            
-        except Exception as e:
-            QMessageBox.critical(self, 'Error', f'Error while pasting text:\n{str(e)}')
-
-    def _get_output_file_path(self) -> Optional[str]:
         output_file, _ = QFileDialog.getSaveFileName(
             self,
             'Save Output File',
@@ -827,58 +782,94 @@ class SubtitleConverter(QMainWindow):
         )
         
         if not output_file:
-            return None
+            return
         
         if not output_file.lower().endswith('.srt'):
             output_file += '.srt'
         
-        return output_file
-
-    def _validate_output_file(self, output_file: str) -> bool:
         for file_info in self.files_to_convert:
-            if file_info.output_path == output_file:
+            if file_info['output'] == output_file:
                 QMessageBox.warning(
                     self,
                     'Duplicate Output',
-                    f'The output file "{os.path.basename(output_file)}" already exists in the list.\n'
-                    'Please choose a different name.'
+                    f'The output file "{os.path.basename(output_file)}" already exists in the list.\nPlease choose a different name.'
                 )
-                return False
+                return
         
+        # Dosya sisteminde aynı isimde dosya var mı kontrol et
         if os.path.exists(output_file):
             reply = QMessageBox.question(
                 self,
-                'File Already Exists',
-                f'"{os.path.basename(output_file)}" already exists.\nDo you want to overwrite it?',
+                'Dosya Zaten Var',
+                f'"{os.path.basename(output_file)}" dosyası zaten mevcut.\nÜzerine yazmak istiyor musunuz?',
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
-            return reply == QMessageBox.Yes
+            if reply == QMessageBox.No:
+                return
         
-        return True
-
-    def _create_temp_file(self, text: str) -> str:
+        # Geçici dosya oluştur
         import tempfile
         temp_dir = tempfile.gettempdir()
         temp_input = os.path.join(temp_dir, 'clipboard_text.txt')
         
-        with open(temp_input, 'w', encoding='utf-8') as f:
-            f.write(text)
-        
-        return temp_input
+        try:
+            with open(temp_input, 'w', encoding='utf-8') as f:
+                f.write(text)
+            
+            file_info = {
+                'input': temp_input,
+                'output': output_file,
+                'is_default_output': False,
+                'is_clipboard': True
+            }
+            
+            self.files_to_convert.append(file_info)
+            self.update_list_item(len(self.files_to_convert) - 1)
+            self.input_next_btn.setEnabled(True)
+            
+        except Exception as e:
+            QMessageBox.critical(self, 'Hata', f'Metin yapıştırılırken hata oluştu:\n{str(e)}')
 
-    @staticmethod
     def safe_file_operations(func):
+        """Dosya işlemleri için güvenlik dekoratörü."""
         @functools.wraps(func)
         def wrapper(self, *args, **kwargs):
             try:
                 return func(self, *args, **kwargs)
             except PermissionError:
-                QMessageBox.critical(self, 'Error', 'Permission denied when accessing file.')
+                QMessageBox.critical(self, 'Hata', 'Dosya erişim izni reddedildi.')
             except OSError as e:
-                QMessageBox.critical(self, 'Error', f'File operation failed: {e}')
+                QMessageBox.critical(self, 'Hata', f'Dosya işlemi başarısız: {e}')
             return None
         return wrapper
+
+    @safe_file_operations
+    def save_output_file(self, content, filepath):
+        """Çıktı dosyasını güvenli bir şekilde kaydeder."""
+        temp_file = filepath + '.tmp'
+        
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        os.replace(temp_file, filepath)
+
+    def process_large_file(self, input_file, output_file, chunk_size=1024*1024):
+        """Büyük dosyaları chunk'lar halinde işler."""
+        with open(input_file, 'r', encoding='utf-8') as infile, \
+             open(output_file, 'w', encoding='utf-8') as outfile:
+            
+            buffer = []
+            for chunk in iter(lambda: infile.read(chunk_size), ''):
+                processed_chunk = self.process_chunk(chunk)
+                buffer.append(processed_chunk)
+                
+                if len(buffer) >= 10:  # Buffer limitini kontrol et
+                    outfile.write(''.join(buffer))
+                    buffer.clear()
+                    
+            if buffer:  # Kalan buffer'ı yaz
+                outfile.write(''.join(buffer))
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
