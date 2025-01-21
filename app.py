@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QPushButton, QLabel, QFileDialog, QMessageBox, QStackedWidget,
                             QListWidget, QProgressBar, QListWidgetItem)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 from PyQt5.QtCore import QSettings
 
 class ConversionWorker(QThread):
@@ -177,9 +177,13 @@ class SubtitleConverter(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
         
-        title = QLabel('Whisper Timestamp to SRT')
-        title.setStyleSheet('font-size: 32px; font-weight: bold; margin-bottom: 30px; color: #ffffff;')
-        title.setAlignment(Qt.AlignCenter)
+        # Banner görselini ekle
+        banner_label = QLabel()
+        banner_pixmap = QPixmap('banner.png')
+        scaled_pixmap = banner_pixmap.scaledToWidth(500, Qt.SmoothTransformation)
+        banner_label.setPixmap(scaled_pixmap)
+        banner_label.setAlignment(Qt.AlignCenter)
+        banner_label.setStyleSheet('margin-bottom: 20px;')
         
         desc = QLabel()
         desc.setText(
@@ -228,7 +232,7 @@ class SubtitleConverter(QMainWindow):
         links_layout.addWidget(contact_link)
         links_layout.addStretch()
         
-        layout.addWidget(title)
+        layout.addWidget(banner_label)  # Banner'ı ekle
         layout.addWidget(desc)
         layout.addWidget(start_btn, alignment=Qt.AlignCenter)
         layout.addWidget(links_container)
