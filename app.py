@@ -165,7 +165,7 @@ class SubtitleConverter(QMainWindow):
         
         links_container = QWidget()
         links_layout = QHBoxLayout(links_container)
-        links_layout.setSpacing(20)  # linkler arası boşluk
+        links_layout.setSpacing(20)  # Space between links
         
         github_link = QLabel()
         github_link.setText('<a href="https://github.com/xeloxa" style="color: #999999; text-decoration: none;">Github</a>')
@@ -218,12 +218,24 @@ class SubtitleConverter(QMainWindow):
         """)
         back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         
+        # Title and subtitle container
+        title_container = QWidget()
+        title_layout = QVBoxLayout(title_container)
+        title_layout.setSpacing(5)
+        
         title = QLabel('Select Files to Convert')
-        title.setStyleSheet('font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #ffffff;')
+        title.setStyleSheet('font-size: 24px; font-weight: bold; color: #ffffff;')
         title.setAlignment(Qt.AlignCenter)
         
+        subtitle = QLabel('Convert the format of your subtitle files to SRT, single or multiple.')
+        subtitle.setStyleSheet('font-size: 12px; color: #999999;')
+        subtitle.setAlignment(Qt.AlignCenter)
+        
+        title_layout.addWidget(title)
+        title_layout.addWidget(subtitle)
+        
         top_layout.addWidget(back_btn, alignment=Qt.AlignLeft)
-        top_layout.addWidget(title)
+        top_layout.addWidget(title_container)
         top_layout.addStretch()
         
         layout.addLayout(top_layout)
@@ -268,14 +280,14 @@ class SubtitleConverter(QMainWindow):
         self.file_list.itemDoubleClicked.connect(self.change_output_location)
         
         # Info label
-        info_label = QLabel('Tip: Double click a file in the list to change its output location')
+        info_label = QLabel('Tip: Double click on a file in the list to change output location\nOnly .txt files are supported.')
         info_label.setStyleSheet('color: #999999; font-size: 12px; font-style: italic;')
         info_label.setAlignment(Qt.AlignCenter)
         
         # Buttons
         button_layout = QHBoxLayout()
         
-        select_btn = QPushButton('Add Files')
+        select_btn = QPushButton('Add TXT File')
         select_btn.clicked.connect(self.select_input_files)
         
         clear_btn = QPushButton('Clear List')
@@ -393,21 +405,45 @@ class SubtitleConverter(QMainWindow):
             self,
             'Select TXT Files',
             '',
-            'Text Files (*.txt)'
+            'TXT Files (*.txt)'
         )
         
         if files:
+            duplicate_files = []
+            new_files = []
+            
             for input_file in files:
-                output_file = input_file.rsplit('.', 1)[0] + '.srt'
-                file_info = {
-                    'input': input_file,
-                    'output': output_file,
-                    'is_default_output': True
-                }
+                # Dosyanın zaten listede olup olmadığını kontrol et
+                is_duplicate = any(file_info['input'] == input_file for file_info in self.files_to_convert)
+                
+                if is_duplicate:
+                    duplicate_files.append(os.path.basename(input_file))
+                else:
+                    output_file = input_file.rsplit('.', 1)[0] + '.srt'
+                    file_info = {
+                        'input': input_file,
+                        'output': output_file,
+                        'is_default_output': True
+                    }
+                    new_files.append(file_info)
+            
+            # Yeni dosyaları listeye ekle
+            for file_info in new_files:
                 self.files_to_convert.append(file_info)
                 self.update_list_item(len(self.files_to_convert) - 1)
             
-            self.input_next_btn.setEnabled(True)
+            # Eğer yeni dosya eklendiyse butonu aktif et
+            if new_files:
+                self.input_next_btn.setEnabled(True)
+            
+            # Eğer tekrar eden dosyalar varsa kullanıcıya bildir
+            if duplicate_files:
+                files_str = "\n".join(duplicate_files)
+                QMessageBox.warning(
+                    self,
+                    'Tekrar Eden Dosyalar',
+                    f'Aşağıdaki dosyalar zaten listede olduğu için eklenmedi:\n\n{files_str}'
+                )
 
     def update_list_item(self, index):
         file_info = self.files_to_convert[index]
@@ -417,13 +453,13 @@ class SubtitleConverter(QMainWindow):
         # Create widget for list item
         item_widget = QWidget()
         layout = QHBoxLayout(item_widget)
-        layout.setContentsMargins(12, 0, 12, 0)  # Üst ve alt margin'i 0 yap
+        layout.setContentsMargins(12, 0, 12, 0)
         layout.setSpacing(15)
         
         # File info container
         info_container = QWidget()
         info_layout = QVBoxLayout(info_container)
-        info_layout.setContentsMargins(0, 10, 0, 10)  # İçerik için üst ve alt padding ekle
+        info_layout.setContentsMargins(0, 10, 0, 10)
         info_layout.setSpacing(2)
         
         # File name label
@@ -454,10 +490,10 @@ class SubtitleConverter(QMainWindow):
         button_container = QWidget()
         button_layout = QVBoxLayout(button_container)
         button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setAlignment(Qt.AlignCenter)  # Dikey ortalama
+        button_layout.setAlignment(Qt.AlignCenter)
         
         # Remove button
-        remove_btn = QPushButton("Kaldır")
+        remove_btn = QPushButton("Remove")
         remove_btn.setObjectName("removeButton")
         remove_btn.setCursor(Qt.PointingHandCursor)
         remove_btn.clicked.connect(lambda: self.remove_file(index))
@@ -486,7 +522,7 @@ class SubtitleConverter(QMainWindow):
             self.files_to_convert.pop(index)
             self.file_list.takeItem(index)
             
-            # Güncellenen liste için indexleri yeniden düzenle
+            # Update indices for remaining items
             for i in range(index, self.file_list.count()):
                 item_widget = self.file_list.itemWidget(self.file_list.item(i))
                 for child in item_widget.children():
@@ -494,7 +530,7 @@ class SubtitleConverter(QMainWindow):
                         child.clicked.disconnect()
                         child.clicked.connect(lambda checked, idx=i: self.remove_file(idx))
             
-            # Eğer liste boşsa Start Conversion butonunu devre dışı bırak
+            # Disable Start Conversion button if list is empty
             if not self.files_to_convert:
                 self.input_next_btn.setEnabled(False)
 
@@ -519,8 +555,8 @@ class SubtitleConverter(QMainWindow):
             if os.path.exists(new_output):
                 reply = QMessageBox.question(
                     self,
-                    'Dosya Zaten Var',
-                    f'"{os.path.basename(new_output)}" dosyası zaten mevcut.\nÜzerine yazmak istiyor musunuz?',
+                    'File Already Exists',
+                    f'The file "{os.path.basename(new_output)}" already exists.\nDo you want to overwrite it?',
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No
                 )
@@ -541,10 +577,10 @@ class SubtitleConverter(QMainWindow):
 
     def start_batch_conversion(self):
         if not self.files_to_convert:
-            QMessageBox.warning(self, 'Hata', 'Lütfen dönüştürülecek dosyaları seçin!')
+            QMessageBox.warning(self, 'Error', 'Please select files to convert!')
             return
             
-        # Var olan dosyaları kontrol et
+        # Check for existing files
         existing_files = []
         for file_info in self.files_to_convert:
             if os.path.exists(file_info['output']):
@@ -554,8 +590,8 @@ class SubtitleConverter(QMainWindow):
             files_str = "\n".join(existing_files)
             reply = QMessageBox.question(
                 self,
-                'Dosyalar Zaten Var',
-                f'Aşağıdaki dosyalar zaten mevcut:\n\n{files_str}\n\nÜzerine yazmak istiyor musunuz?',
+                'Files Already Exist',
+                f'The following files already exist:\n\n{files_str}\n\nDo you want to overwrite them?',
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
@@ -571,7 +607,7 @@ class SubtitleConverter(QMainWindow):
         # File access check
         for file_info in self.files_to_convert:
             if not os.path.exists(file_info['input']):
-                QMessageBox.warning(self, 'Hata', f"Dosya bulunamadı: {file_info['input']}")
+                QMessageBox.warning(self, 'Error', f"File not found: {file_info['input']}")
                 self.input_next_btn.setEnabled(True)
                 return
                 
@@ -580,7 +616,7 @@ class SubtitleConverter(QMainWindow):
                 try:
                     os.makedirs(output_dir)
                 except Exception as e:
-                    QMessageBox.warning(self, 'Hata', f"Çıktı dizini oluşturulamadı: {output_dir}\n{str(e)}")
+                    QMessageBox.warning(self, 'Error', f"Could not create output directory: {output_dir}\n{str(e)}")
                     self.input_next_btn.setEnabled(True)
                     return
         
