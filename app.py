@@ -1,24 +1,49 @@
 import re
 import sys
 import os
+import functools
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QFileDialog, QMessageBox, QStackedWidget,
                             QListWidget, QProgressBar, QListWidgetItem)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
+from PyQt5.QtCore import QSettings
 
 class ConversionWorker(QThread):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, input_files):
+    def __init__(self, input_files, batch_size=100):
         super().__init__()
         self.input_files = input_files
+        self.batch_size = batch_size
+        self._is_cancelled = False
 
     def run(self):
+        try:
+            self.process_files_in_batches()
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.finished.emit()
+
+    def process_files_in_batches(self):
+        """Dosyaları batch'ler halinde işler."""
         total = len(self.input_files)
-        for i, file_info in enumerate(self.input_files):
+        for i in range(0, total, self.batch_size):
+            if self._is_cancelled:
+                break
+                
+            batch = self.input_files[i:i + self.batch_size]
+            self.process_batch(batch, i, total)
+
+    def cancel(self):
+        """Dönüştürme işlemini iptal eder."""
+        self._is_cancelled = True
+
+    def process_batch(self, batch, index, total):
+        for i, file_info in enumerate(batch):
             try:
                 input_file = file_info['input']
                 output_file = file_info['output']
@@ -47,12 +72,11 @@ class ConversionWorker(QThread):
                                 outfile.write(f"{text}\n\n")
                                 subtitle_index += 1
                 
-                progress = int(((i + 1) / total) * 100)
+                progress = int(((i + index) / total) * 100)
                 self.progress.emit(progress, os.path.basename(input_file))
             except Exception as e:
                 self.error.emit(f"{os.path.basename(input_file)}: {str(e)}")
                 continue
-        self.finished.emit()
 
     def time_to_seconds(self, timestamp):
         try:
@@ -71,9 +95,31 @@ class ConversionWorker(QThread):
 class SubtitleConverter(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.files_to_convert = []
-        self.initUI()
-        
+        self.files_to_convert = []  # Dosya listesini başlat
+        self.setup_ui()
+        self.setup_connections()
+        self.load_settings()
+
+    def setup_ui(self):
+        """Kullanıcı arayüzünü hazırlar."""
+        self.setWindowTitle('Whisper Timestamp to SRT')
+        self.setGeometry(100, 100, 800, 600)  # Pencere boyutunu ayarla
+        self.initUI()  # Mevcut UI kurulum metodunu çağır
+
+    def setup_connections(self):
+        """Sinyal ve yuva bağlantılarını kurar."""
+        if hasattr(self, 'file_list'):
+            self.file_list.itemDoubleClicked.connect(self.change_output_location)
+        if hasattr(self, 'input_next_btn'):
+            self.input_next_btn.clicked.connect(self.start_batch_conversion)
+
+    def load_settings(self):
+        """Uygulama ayarlarını yükler."""
+        settings = QSettings('XeloxaSoft', 'WhisperToSRT')
+        geometry = settings.value('geometry')
+        if geometry:
+            self.restoreGeometry(geometry)
+
     def initUI(self):
         self.setWindowTitle('Whisper Timestamp to SRT')
         self.setGeometry(100, 100, 600, 400)
@@ -655,54 +701,51 @@ class SubtitleConverter(QMainWindow):
         self.stack.setCurrentIndex(0)
 
     def convert_subtitles(self):
-        if not self.files_to_convert:
-            QMessageBox.warning(self, 'Error', 'Please select files to convert!')
+        """Altyazı dosyasını SRT formatına dönüştürür."""
+        if not self.validate_conversion():
             return
-            
+        
         try:
             with open(self.files_to_convert[0]['input'], "r", encoding='utf-8') as infile:
                 lines = infile.readlines()
-                total_lines = len(lines)
                 
-            with open(self.files_to_convert[0]['input'], "r", encoding='utf-8') as infile, \
-                 open(self.files_to_convert[0]['output'], "w", encoding='utf-8') as outfile:
-                
-                subtitle_index = 1
-                current_line = 0
-                
-                for line in lines:
-                    current_line += 1
-                    progress = int((current_line / total_lines) * 100)
-                    QApplication.processEvents()
-                    
-                    time_match = re.search(r'\[(\d+:\d+\.\d+)\s*->\s*(\d+:\d+\.\d+)\]', line)
-                    
-                    if time_match:
-                        start_time = self.time_to_seconds(time_match.group(1))
-                        end_time = self.time_to_seconds(time_match.group(2))
-                        
-                        if start_time >= end_time:
-                            continue
-                            
-                        outfile.write(f"{subtitle_index}\n")
-                        outfile.write(f"{self.format_time(start_time)} --> {self.format_time(end_time)}\n")
-                        
-                        text = re.sub(r'\[.*?\]', '', line).strip()
-                        if text:
-                            outfile.write(f"{text}\n\n")
-                            subtitle_index += 1
-                
-            QMessageBox.information(self, 'Success', f'Conversion completed!\nFile saved as: {self.files_to_convert[0]["output"]}')
+            self.process_subtitle_conversion(lines)
+            self.show_success_message()
             
+        except FileNotFoundError:
+            QMessageBox.critical(self, 'Hata', 'Kaynak dosya bulunamadı.')
+        except PermissionError:
+            QMessageBox.critical(self, 'Hata', 'Dosya erişim izni reddedildi.')
         except Exception as e:
-            QMessageBox.critical(self, 'Error', f'An error occurred during conversion:\n{str(e)}')
+            QMessageBox.critical(self, 'Hata', f'Dönüştürme sırasında hata oluştu:\n{str(e)}')
 
-    def format_time(self, seconds):
-        milliseconds = int((seconds - int(seconds)) * 1000)
-        seconds = int(seconds)
-        minutes, seconds = divmod(seconds, 60)
-        hours, minutes = divmod(minutes, 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+    def validate_conversion(self):
+        """Dönüştürme işlemi için gerekli kontrolleri yapar."""
+        if not self.files_to_convert:
+            QMessageBox.warning(self, 'Hata', 'Lütfen dönüştürülecek dosyaları seçin!')
+            return False
+        
+        if not os.path.exists(self.files_to_convert[0]['input']):
+            QMessageBox.warning(self, 'Hata', 'Kaynak dosya bulunamadı!')
+            return False
+        
+        return True
+
+    def process_subtitle_conversion(self, lines):
+        """Altyazı dönüştürme işlemini gerçekleştirir."""
+        total_lines = len(lines)
+        with open(self.files_to_convert[0]['output'], "w", encoding='utf-8') as outfile:
+            subtitle_index = 1
+            
+            for current_line, line in enumerate(lines, 1):
+                self.update_conversion_progress(current_line, total_lines)
+                
+                if subtitle := self.parse_subtitle_line(line, subtitle_index):
+                    outfile.write(subtitle)
+                    subtitle_index += 1
+
+    def show_success_message(self):
+        QMessageBox.information(self, 'Success', f'Conversion completed!\nFile saved as: {self.files_to_convert[0]["output"]}')
 
     def list_mouse_press_event(self, event):
         if event.button() == Qt.LeftButton and not self.file_list.itemAt(event.pos()):
@@ -787,6 +830,46 @@ class SubtitleConverter(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, 'Hata', f'Metin yapıştırılırken hata oluştu:\n{str(e)}')
+
+    def safe_file_operations(func):
+        """Dosya işlemleri için güvenlik dekoratörü."""
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except PermissionError:
+                QMessageBox.critical(self, 'Hata', 'Dosya erişim izni reddedildi.')
+            except OSError as e:
+                QMessageBox.critical(self, 'Hata', f'Dosya işlemi başarısız: {e}')
+            return None
+        return wrapper
+
+    @safe_file_operations
+    def save_output_file(self, content, filepath):
+        """Çıktı dosyasını güvenli bir şekilde kaydeder."""
+        temp_file = filepath + '.tmp'
+        
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        os.replace(temp_file, filepath)
+
+    def process_large_file(self, input_file, output_file, chunk_size=1024*1024):
+        """Büyük dosyaları chunk'lar halinde işler."""
+        with open(input_file, 'r', encoding='utf-8') as infile, \
+             open(output_file, 'w', encoding='utf-8') as outfile:
+            
+            buffer = []
+            for chunk in iter(lambda: infile.read(chunk_size), ''):
+                processed_chunk = self.process_chunk(chunk)
+                buffer.append(processed_chunk)
+                
+                if len(buffer) >= 10:  # Buffer limitini kontrol et
+                    outfile.write(''.join(buffer))
+                    buffer.clear()
+                    
+            if buffer:  # Kalan buffer'ı yaz
+                outfile.write(''.join(buffer))
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
