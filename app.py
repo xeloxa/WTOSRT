@@ -9,6 +9,12 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap
 from PyQt5.QtCore import QSettings
 
+def resource_path(relative_path):
+    """PyInstaller ile uyumlu kaynak dosya yolu oluşturur"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 class ConversionWorker(QThread):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal()
@@ -179,7 +185,7 @@ class SubtitleConverter(QMainWindow):
         
         # Banner görselini ekle
         banner_label = QLabel()
-        banner_pixmap = QPixmap('banner.png')
+        banner_pixmap = QPixmap(resource_path('banner.png'))
         scaled_pixmap = banner_pixmap.scaledToWidth(500, Qt.SmoothTransformation)
         banner_label.setPixmap(scaled_pixmap)
         banner_label.setAlignment(Qt.AlignCenter)
