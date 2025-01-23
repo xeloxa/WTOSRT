@@ -1,3 +1,0 @@
-([('WtoSRT',
-   '/Users/nexava/Desktop/Whisper-timestamp-to-srt/dist/WtoSRT',
-   'EXECUTABLE')],)
