@@ -2,6 +2,7 @@ import re
 import sys
 import os
 import functools
+import time
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QFileDialog, QMessageBox, QStackedWidget,
                             QListWidget, QProgressBar, QListWidgetItem)
@@ -784,10 +785,24 @@ class SubtitleConverter(QMainWindow):
             QMessageBox.warning(self, 'Error', 'No text found in clipboard!')
             return
         
+        # Benzersiz dosya adı oluştur
+        base_name = 'clipboard_text'
+        counter = 1
+        while True:
+            suggested_name = f'{base_name}_{counter}.srt' if counter > 1 else f'{base_name}.srt'
+            suggested_path = os.path.join(os.path.expanduser('~/Desktop'), suggested_name)
+            
+            # Hem dosya sisteminde hem de dönüştürme listesinde kontrol et
+            if not os.path.exists(suggested_path) and not any(
+                file_info['output'] == suggested_path for file_info in self.files_to_convert
+            ):
+                break
+            counter += 1
+        
         output_file, _ = QFileDialog.getSaveFileName(
             self,
             'Save Output File',
-            os.path.expanduser('~/Desktop/clipboard_text.srt'),
+            suggested_path,
             'SRT Files (*.srt)'
         )
         
@@ -797,6 +812,7 @@ class SubtitleConverter(QMainWindow):
         if not output_file.lower().endswith('.srt'):
             output_file += '.srt'
         
+        # Çıktı dosyası zaten listede mi kontrol et
         for file_info in self.files_to_convert:
             if file_info['output'] == output_file:
                 QMessageBox.warning(
@@ -806,22 +822,10 @@ class SubtitleConverter(QMainWindow):
                 )
                 return
         
-        # Dosya sisteminde aynı isimde dosya var mı kontrol et
-        if os.path.exists(output_file):
-            reply = QMessageBox.question(
-                self,
-                'Dosya Zaten Var',
-                f'"{os.path.basename(output_file)}" dosyası zaten mevcut.\nÜzerine yazmak istiyor musunuz?',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if reply == QMessageBox.No:
-                return
-        
-        # Geçici dosya oluştur
+        # Benzersiz geçici dosya oluştur
         import tempfile
         temp_dir = tempfile.gettempdir()
-        temp_input = os.path.join(temp_dir, 'clipboard_text.txt')
+        temp_input = os.path.join(temp_dir, f'clipboard_text_{int(time.time()*1000)}.txt')
         
         try:
             with open(temp_input, 'w', encoding='utf-8') as f:
